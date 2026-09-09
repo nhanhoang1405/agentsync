@@ -636,6 +636,80 @@ impl Database {
         Ok((version_rows.len(), deleted_files))
     }
 
+    pub fn clean_skill_versions(
+        &mut self,
+        author_email: &str,
+        agent: AgentName,
+        cutoff: std::time::SystemTime,
+    ) -> Result<(usize, usize)> {
+        let mut transaction = self
+            .client
+            .transaction()
+            .context("could not start skill version cleanup")?;
+        let rows = transaction
+            .query(
+                r#"
+                SELECT version.id,
+                       (SELECT count(*) FROM agentsync_skill_version_files file
+                        WHERE file.skill_version_id = version.id)::bigint
+                FROM agentsync_skill_versions version
+                WHERE version.author_email = $1 AND version.agent = $2
+                  AND version.created_at < $3
+                  AND version.version < (
+                      SELECT max(newest.version)
+                      FROM agentsync_skill_versions newest
+                      WHERE newest.author_email = version.author_email
+                        AND newest.agent = version.agent
+                        AND newest.scope = version.scope
+                        AND newest.project_key = version.project_key
+                        AND newest.skill_name = version.skill_name
+                  )
+                "#,
+                &[&author_email, &agent.as_str(), &cutoff],
+            )
+            .context("could not find expired skill versions")?;
+        let removed_files = rows.iter().map(|row| row.get::<_, i64>(1) as usize).sum();
+        for row in &rows {
+            transaction
+                .execute(
+                    "DELETE FROM agentsync_skill_versions WHERE id = $1",
+                    &[&row.get::<_, i64>(0)],
+                )
+                .context("could not delete an expired skill version")?;
+        }
+        transaction
+            .commit()
+            .context("could not commit skill version cleanup")?;
+        Ok((rows.len(), removed_files))
+    }
+
+    pub fn delete_histories_before(
+        &mut self,
+        author_email: &str,
+        agent: AgentName,
+        context: &SyncContext,
+        cutoff: std::time::SystemTime,
+    ) -> Result<usize> {
+        self.client
+            .execute(
+                r#"
+                DELETE FROM agentsync_resources
+                WHERE author_email = $1 AND agent = $2 AND kind = 'histories'
+                  AND scope = $3 AND project_key = $4
+                  AND COALESCE(source_modified_at, updated_at) < $5
+                "#,
+                &[
+                    &author_email,
+                    &agent.as_str(),
+                    &context.scope.as_str(),
+                    &context.database_project_key(),
+                    &cutoff,
+                ],
+            )
+            .map(|count| count as usize)
+            .context("could not delete expired remote history")
+    }
+
     pub fn list(&mut self, filter: ListFilter<'_>) -> Result<Vec<ResourceSummary>> {
         let rows = self
             .client

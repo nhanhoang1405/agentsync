@@ -191,6 +191,24 @@ export const SkillsView = memo(function SkillsView({ syncEnabled, currentUser }:
     }
   }
 
+  async function cleanSkills() {
+    if (!window.confirm(
+      "Remove remote skill versions older than one month? The newest version of each skill will be kept.",
+    )) return;
+    setBusyId("clean-skills");
+    setError(undefined);
+    setNotice(undefined);
+    try {
+      const result = await api.cleanSkills();
+      await loadRemoteSkills(true);
+      setNotice(`Removed ${result.removedRemote} old remote skill versions.`);
+    } catch (reason) {
+      setError(errorMessage(reason));
+    } finally {
+      setBusyId(undefined);
+    }
+  }
+
   async function pullSkill(skill: RemoteSkill, version = skill.syncVersion) {
     const project = skill.scope === "project"
       ? projects.find((item) => item.key === skill.projectKey)
@@ -363,17 +381,32 @@ export const SkillsView = memo(function SkillsView({ syncEnabled, currentUser }:
         <SkillSection
           title="Remote skills"
           count={visibleRemoteSkills.length}
-          headerAction={authors.length > 0 ? (
-            <select
-              className="author-filter"
-              aria-label="Filter remote skills by author"
-              value={author}
-              onChange={(event) => setAuthor(event.target.value)}
-            >
-              <option value="all">All authors</option>
-              {authors.map((value) => <option value={value} key={value}>{value}</option>)}
-            </select>
-          ) : undefined}
+          headerAction={(
+            <>
+              {authors.length > 0 && (
+                <select
+                  className="author-filter"
+                  aria-label="Filter remote skills by author"
+                  value={author}
+                  onChange={(event) => setAuthor(event.target.value)}
+                >
+                  <option value="all">All authors</option>
+                  {authors.map((value) => <option value={value} key={value}>{value}</option>)}
+                </select>
+              )}
+              <button
+                className="skill-remove-button skill-clean-button"
+                disabled={!syncEnabled || !currentUser || busyId !== undefined}
+                onClick={() => void cleanSkills()}
+                title={syncEnabled
+                  ? "Remove your remote skill versions older than one month"
+                  : "Configure Postgres to clean remote skills"}
+              >
+                <Trash2 size={13} />
+                Clean
+              </button>
+            </>
+          )}
         >
           {visibleRemoteSkills.map((skill) => (
             <SkillRow

@@ -4,6 +4,7 @@ use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     fs,
     path::{Path, PathBuf},
+    time::{Duration, SystemTime},
 };
 
 use anyhow::{Context, Result, bail};
@@ -141,6 +142,13 @@ pub struct DeleteSkillRequest {
 pub struct DeleteSkillResult {
     pub removed_files: usize,
     pub removed_versions: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CleanupResult {
+    pub removed_local: usize,
+    pub removed_remote: usize,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -553,6 +561,71 @@ pub fn quick_sync_skills() -> Result<SyncResult> {
         )?);
     }
     Ok(result)
+}
+
+pub fn clean_skills() -> Result<CleanupResult> {
+    let (config, mut database) = connected_database()?;
+    let cutoff = SystemTime::now() - Duration::from_secs(30 * 24 * 60 * 60);
+    let (removed_versions, _) =
+        database.clean_skill_versions(&config.email, AgentName::Codex, cutoff)?;
+    Ok(CleanupResult {
+        removed_local: 0,
+        removed_remote: removed_versions,
+    })
+}
+
+pub fn clean_history(request: HistorySyncRequest) -> Result<CleanupResult> {
+    let context = requested_context(
+        Scope::Project,
+        Some(&request.project_root),
+        request.project_key.as_deref(),
+    )?;
+    let adapter = adapter(AgentName::Codex)?;
+    let cutoff = SystemTime::now() - Duration::from_secs(90 * 24 * 60 * 60);
+    let (config, mut database) = connected_database()?;
+    let local = adapter.discover(&context, ResourceSelection::Histories)?;
+    let sessions_root = adapter.home().join("sessions");
+    let canonical_sessions_root = if sessions_root.is_dir() {
+        Some(fs::canonicalize(&sessions_root).with_context(|| {
+            format!(
+                "could not validate the Codex sessions directory {}",
+                sessions_root.display()
+            )
+        })?)
+    } else {
+        None
+    };
+    let expired_sources = local
+        .resources
+        .iter()
+        .filter(|resource| resource.modified_at < cutoff)
+        .map(|resource| {
+            let sessions_root = canonical_sessions_root
+                .as_ref()
+                .context("the Codex sessions directory does not exist")?;
+            let source = fs::canonicalize(&resource.source).with_context(|| {
+                format!(
+                    "could not validate old session {}",
+                    resource.source.display()
+                )
+            })?;
+            if !source.starts_with(sessions_root) {
+                bail!("refusing to remove a history file outside the Codex sessions directory");
+            }
+            Ok(source)
+        })
+        .collect::<Result<Vec<_>>>()?;
+    for source in &expired_sources {
+        fs::remove_file(source)
+            .with_context(|| format!("could not remove old session {}", source.display()))?;
+    }
+    clear_session_cache();
+    let removed_remote =
+        database.delete_histories_before(&config.email, AgentName::Codex, &context, cutoff)?;
+    Ok(CleanupResult {
+        removed_local: expired_sources.len(),
+        removed_remote,
+    })
 }
 
 pub fn sync_history(request: HistorySyncRequest) -> Result<SyncResult> {
