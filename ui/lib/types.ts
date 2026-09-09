@@ -1,6 +1,7 @@
 export type Scope = "global" | "project";
 export type Visibility = "private" | "public";
 export type ResourceKind = "tools" | "skills" | "histories";
+export type SyncStatus = "newer" | "older" | "synced";
 
 export interface AppStatus {
   configured: boolean;
@@ -16,6 +17,7 @@ export interface Project {
   path: string;
   sessionCount: number;
   latestSessionAt?: string;
+  syncStatus?: SyncStatus;
 }
 
 export interface SkillFile {
@@ -32,6 +34,7 @@ export interface Skill {
   projectKey: string;
   projectPath?: string;
   files: SkillFile[];
+  syncStatus?: SyncStatus;
 }
 
 export interface RemoteSkill {

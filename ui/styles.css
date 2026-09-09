@@ -59,6 +59,7 @@ button { color: inherit; }
 .skill-row-controls { display: flex; align-items: center; gap: 4px; padding-right: 7px; }
 .skill-sync-button { display: inline-flex; align-items: center; gap: 3px; padding: 4px 6px; color: var(--green); border: 1px solid #bfd0c4; border-radius: 6px; background: #fff; cursor: pointer; font-size: 9px; font-weight: 700; }
 .skill-sync-button:disabled { opacity: .45; cursor: default; }
+.quick-sync-button { white-space: nowrap; }
 .skill-remove-button { display: inline-flex; align-items: center; justify-content: center; padding: 4px; color: #a64c3a; border: 1px solid #e2c4bc; border-radius: 6px; background: #fff; cursor: pointer; }
 .skill-remove-button:disabled { opacity: .35; cursor: default; }
 .remote-meta { display: flex; justify-content: space-between; gap: 6px; margin: -3px 17px 12px; color: var(--muted); font-size: 9px; }
@@ -79,6 +80,9 @@ button { color: inherit; }
 .list-item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px; border: 0; border-radius: 8px; background: transparent; cursor: pointer; text-align: left; }
 .list-item:hover, .list-item.selected { background: #eef0e9; }
 .list-item.selected { box-shadow: inset 3px 0 var(--orange); }
+.sync-indicator { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; }
+.sync-indicator.newer { color: var(--orange); }
+.sync-indicator.older { color: #4778a8; }
 .item-icon { display: inline-flex; align-items: center; justify-content: center; width: 31px; height: 31px; flex: 0 0 auto; border-radius: 8px; color: var(--green); background: var(--green-soft); }
 .item-copy { display: flex; flex-direction: column; min-width: 0; }
 .item-copy strong { overflow: hidden; text-overflow: ellipsis; font-size: 13px; }

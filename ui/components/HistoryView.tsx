@@ -2,6 +2,8 @@ import { memo, useEffect, useRef, useState } from "react";
 import {
   Bot,
   CalendarDays,
+  CloudDownload,
+  CloudUpload,
   FolderGit2,
   LoaderCircle,
   MessageSquareText,
@@ -159,7 +161,7 @@ export const HistoryView = memo(function HistoryView({ syncEnabled }: HistoryVie
     <section className="page view-grid history-grid">
       <aside className="panel list-panel">
         <div className="panel-heading">
-          <div><span className="eyebrow">Workspace</span><h1>Projects</h1></div>
+          <span className="eyebrow">Workspace</span>
           <span className="count-badge">{projects.length}</span>
         </div>
         {error && <p className="error-box">{error}</p>}
@@ -175,6 +177,21 @@ export const HistoryView = memo(function HistoryView({ syncEnabled }: HistoryVie
                 <strong>{item.name}</strong>
                 <small>{item.sessionCount} sessions</small>
               </span>
+              {item.syncStatus && item.syncStatus !== "synced" && (
+                <span
+                  className={`sync-indicator ${item.syncStatus}`}
+                  title={item.syncStatus === "newer"
+                    ? "Local history is newer than remote"
+                    : "Local history is older than remote"}
+                  aria-label={item.syncStatus === "newer"
+                    ? "Local history is newer than remote"
+                    : "Local history is older than remote"}
+                >
+                  {item.syncStatus === "newer"
+                    ? <CloudUpload size={14} />
+                    : <CloudDownload size={14} />}
+                </span>
+              )}
             </button>
           ))}
           {loadingProjects && (

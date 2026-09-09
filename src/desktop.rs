@@ -19,7 +19,8 @@ use crate::{
     },
     model::{
         AgentName, LocalResource, ResourceKind, ResourceSelection, ResourceSummary, Scope,
-        SyncContext, Visibility, sha256, skill_name, skill_path_parts,
+        StoredResourceState, SyncContext, SyncStatus, Visibility, sha256, skill_name,
+        skill_path_parts, system_times_match,
     },
     project,
 };
@@ -50,6 +51,7 @@ pub struct ProjectView {
     pub path: String,
     pub session_count: usize,
     pub latest_session_at: Option<String>,
+    pub sync_status: Option<SyncStatus>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -61,6 +63,7 @@ pub struct SkillView {
     pub project_key: String,
     pub project_path: Option<String>,
     pub files: Vec<SkillFileView>,
+    pub sync_status: Option<SyncStatus>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -194,10 +197,11 @@ pub fn save_connection(input: ConnectionInput) -> Result<AppStatus> {
 pub fn list_projects() -> Result<Vec<ProjectView>> {
     let adapter = adapter(AgentName::Codex)?;
     let sessions = discover_sessions(&adapter.home().join("sessions"))?;
+    let remote = owned_resource_states(ResourceKind::Histories);
     let mut projects = adapter
         .known_project_roots()?
         .into_iter()
-        .map(|root| project_view(&root, &sessions))
+        .map(|root| project_view(&root, &sessions, remote.as_deref()))
         .collect::<Result<Vec<_>>>()?;
     projects.sort_by(|left, right| {
         right
@@ -211,14 +215,32 @@ pub fn list_projects() -> Result<Vec<ProjectView>> {
 pub fn list_skills() -> Result<Vec<SkillView>> {
     let adapter = adapter(AgentName::Codex)?;
     let mut skills = BTreeMap::new();
+    let mut local_states = BTreeMap::new();
     collect_skills(
         adapter.as_ref(),
         global_context(adapter.home()),
         &mut skills,
+        &mut local_states,
     )?;
     for root in adapter.known_project_roots()? {
         let context = project::context(Scope::Project, Some(&root), None)?;
-        collect_skills(adapter.as_ref(), context, &mut skills)?;
+        collect_skills(adapter.as_ref(), context, &mut skills, &mut local_states)?;
+    }
+    if let Some(remote) = owned_resource_states(ResourceKind::Skills) {
+        let mut remote_by_skill = BTreeMap::<String, Vec<&StoredResourceState>>::new();
+        for resource in &remote {
+            let Some(name) = skill_name(&resource.path) else {
+                continue;
+            };
+            let id = format!("{}:{}:{name}", resource.scope, resource.project_key);
+            remote_by_skill.entry(id).or_default().push(resource);
+        }
+        for (id, skill) in &mut skills {
+            skill.sync_status = Some(skill_sync_status(
+                local_states.get(id).map(Vec::as_slice).unwrap_or_default(),
+                remote_by_skill.get(id).map(Vec::as_slice),
+            ));
+        }
     }
     Ok(skills.into_values().collect())
 }
@@ -480,6 +502,59 @@ pub fn delete_skill(request: DeleteSkillRequest) -> Result<DeleteSkillResult> {
     }
 }
 
+pub fn quick_sync_skills() -> Result<SyncResult> {
+    let adapter = adapter(AgentName::Codex)?;
+    let mut contexts = vec![global_context(adapter.home())];
+    for root in adapter.known_project_roots()? {
+        contexts.push(project::context(Scope::Project, Some(&root), None)?);
+    }
+    let (config, mut database) = connected_database()?;
+    let mut result = SyncResult {
+        uploaded: 0,
+        written: 0,
+        metadata_updated: 0,
+        conflicts: 0,
+        unchanged: 0,
+        resources: Vec::new(),
+    };
+    for context in contexts {
+        let local = adapter.discover(&context, ResourceSelection::Skills)?;
+        let local_names = local
+            .resources
+            .iter()
+            .filter_map(|resource| skill_name(&resource.path))
+            .collect::<BTreeSet<_>>();
+        if local_names.is_empty() {
+            continue;
+        }
+        let remote = database.pull(
+            &config.email,
+            &config.email,
+            AgentName::Codex,
+            &context,
+            Some(ResourceKind::Skills),
+        )?;
+        for resource in remote {
+            if !skill_name(&resource.path).is_some_and(|name| local_names.contains(name)) {
+                continue;
+            }
+            verify_remote(&resource)?;
+            match adapter.write(&context, &resource)? {
+                WriteOutcome::Created | WriteOutcome::Updated => result.written += 1,
+                WriteOutcome::MetadataUpdated => result.metadata_updated += 1,
+                WriteOutcome::Unchanged => result.unchanged += 1,
+            }
+        }
+        result.resources.extend(list_for_context(
+            &mut database,
+            &config,
+            &context,
+            ResourceSelection::Skills,
+        )?);
+    }
+    Ok(result)
+}
+
 pub fn sync_history(request: HistorySyncRequest) -> Result<SyncResult> {
     let context = requested_context(
         Scope::Project,
@@ -565,12 +640,24 @@ fn connected_database() -> Result<(Config, Database)> {
     Ok((config, database))
 }
 
-fn project_view(root: &Path, sessions: &[SessionSummary]) -> Result<ProjectView> {
+fn project_view(
+    root: &Path,
+    sessions: &[SessionSummary],
+    remote: Option<&[StoredResourceState]>,
+) -> Result<ProjectView> {
     let context = project::context(Scope::Project, Some(root), None)?;
     let matching = sessions
         .iter()
         .filter(|session| path_belongs_to(&session.project_path, root))
         .collect::<Vec<_>>();
+    let remote = remote.map(|resources| {
+        resources
+            .iter()
+            .filter(|resource| {
+                resource.scope == Scope::Project && resource.project_key == context.project_key
+            })
+            .collect::<Vec<_>>()
+    });
     Ok(ProjectView {
         key: context.project_key,
         name: root
@@ -584,6 +671,7 @@ fn project_view(root: &Path, sessions: &[SessionSummary]) -> Result<ProjectView>
             .iter()
             .filter_map(|session| session.started_at.clone())
             .max(),
+        sync_status: remote.map(|remote| project_sync_status(&matching, &remote)),
     })
 }
 
@@ -591,6 +679,7 @@ fn collect_skills(
     adapter: &dyn AgentAdapter,
     context: SyncContext,
     skills: &mut BTreeMap<String, SkillView>,
+    states: &mut BTreeMap<String, Vec<LocalSkillFileState>>,
 ) -> Result<()> {
     let discovery = adapter.discover(&context, ResourceSelection::Skills)?;
     for resource in discovery.resources {
@@ -600,6 +689,14 @@ fn collect_skills(
         let name = name.to_owned();
         let relative = relative.to_owned();
         let id = format!("{}:{}:{name}", context.scope, context.project_key);
+        states
+            .entry(id.clone())
+            .or_default()
+            .push(LocalSkillFileState {
+                path: resource.path.clone(),
+                sha256: resource.sha256(),
+                modified_at: resource.modified_at,
+            });
         let skill = skills.entry(id.clone()).or_insert_with(|| SkillView {
             id,
             name,
@@ -608,6 +705,7 @@ fn collect_skills(
             project_path: (context.scope == Scope::Project)
                 .then(|| context.project_root.display().to_string()),
             files: Vec::new(),
+            sync_status: None,
         });
         let Ok(content) = String::from_utf8(resource.content) else {
             continue;
@@ -623,6 +721,89 @@ fn collect_skills(
         sort_skill_files(&mut skill.files);
     }
     Ok(())
+}
+
+#[derive(Clone, Debug)]
+struct LocalSkillFileState {
+    path: String,
+    sha256: String,
+    modified_at: std::time::SystemTime,
+}
+
+fn skill_sync_status(
+    local: &[LocalSkillFileState],
+    remote: Option<&[&StoredResourceState]>,
+) -> SyncStatus {
+    let Some(remote) = remote else {
+        return SyncStatus::Newer;
+    };
+    let hashes_match = local.len() == remote.len()
+        && local.iter().all(|local| {
+            remote
+                .iter()
+                .any(|remote| remote.path == local.path && remote.sha256 == local.sha256)
+        });
+    if hashes_match {
+        return SyncStatus::Synced;
+    }
+    let local_latest = local.iter().map(|resource| resource.modified_at).max();
+    let remote_latest = remote
+        .iter()
+        .filter_map(|resource| resource.modified_at)
+        .max();
+    match (local_latest, remote_latest) {
+        (None, Some(_)) => SyncStatus::Older,
+        (Some(local), Some(remote)) if local < remote => SyncStatus::Older,
+        _ => SyncStatus::Newer,
+    }
+}
+
+fn project_sync_status(local: &[&SessionSummary], remote: &[&StoredResourceState]) -> SyncStatus {
+    if local.is_empty() && remote.is_empty() {
+        return SyncStatus::Synced;
+    }
+    if remote.is_empty() {
+        return SyncStatus::Newer;
+    }
+    if local.is_empty() {
+        return SyncStatus::Older;
+    }
+    let local_latest = local
+        .iter()
+        .filter_map(|session| session.modified_at.as_deref())
+        .filter_map(system_time_from_text)
+        .max();
+    let remote_latest = remote
+        .iter()
+        .filter_map(|resource| resource.modified_at)
+        .max();
+    if local.len() == remote.len()
+        && local_latest
+            .zip(remote_latest)
+            .is_some_and(|(local, remote)| system_times_match(local, remote))
+    {
+        return SyncStatus::Synced;
+    }
+    match (local_latest, remote_latest) {
+        (None, Some(_)) => SyncStatus::Older,
+        (Some(local), Some(remote)) if local < remote => SyncStatus::Older,
+        (Some(local), Some(remote)) if local > remote => SyncStatus::Newer,
+        _ if local.len() < remote.len() => SyncStatus::Older,
+        _ => SyncStatus::Newer,
+    }
+}
+
+fn system_time_from_text(value: &str) -> Option<std::time::SystemTime> {
+    chrono::DateTime::parse_from_rfc3339(value)
+        .ok()
+        .map(std::time::SystemTime::from)
+}
+
+fn owned_resource_states(kind: ResourceKind) -> Option<Vec<StoredResourceState>> {
+    let (config, mut database) = connected_database().ok()?;
+    database
+        .owned_resource_states(&config.email, AgentName::Codex, kind)
+        .ok()
 }
 
 fn sort_skill_files(files: &mut [SkillFileView]) {
@@ -835,6 +1016,16 @@ mod tests {
         }
     }
 
+    fn remote_state(path: &str, sha256: &str, modified_at: u64) -> StoredResourceState {
+        StoredResourceState {
+            scope: Scope::Global,
+            project_key: String::new(),
+            path: path.to_owned(),
+            sha256: sha256.to_owned(),
+            modified_at: Some(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(modified_at)),
+        }
+    }
+
     #[test]
     fn histories_cannot_be_made_public() {
         assert_eq!(
@@ -919,5 +1110,31 @@ mod tests {
             history_direction(Some(&local), Some(&remote)),
             HistoryDirection::Upload
         );
+    }
+
+    #[test]
+    fn skill_status_uses_hashes_then_modification_direction() {
+        let local = LocalSkillFileState {
+            path: "skills/review/SKILL.md".to_owned(),
+            sha256: "local".to_owned(),
+            modified_at: SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(20),
+        };
+        let matching = remote_state(&local.path, &local.sha256, 10);
+        let older = remote_state(&local.path, "remote", 10);
+        let newer = remote_state(&local.path, "remote", 30);
+
+        assert_eq!(
+            skill_sync_status(std::slice::from_ref(&local), Some(&[&matching])),
+            SyncStatus::Synced
+        );
+        assert_eq!(
+            skill_sync_status(std::slice::from_ref(&local), Some(&[&older])),
+            SyncStatus::Newer
+        );
+        assert_eq!(
+            skill_sync_status(std::slice::from_ref(&local), Some(&[&newer])),
+            SyncStatus::Older
+        );
+        assert_eq!(skill_sync_status(&[local], None), SyncStatus::Newer);
     }
 }

@@ -223,6 +223,23 @@ pub struct StoredSkillVersionResource {
     pub resource: RemoteResource,
 }
 
+#[derive(Clone, Debug)]
+pub struct StoredResourceState {
+    pub scope: Scope,
+    pub project_key: String,
+    pub path: String,
+    pub sha256: String,
+    pub modified_at: Option<SystemTime>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SyncStatus {
+    Newer,
+    Older,
+    Synced,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourceSummary {
