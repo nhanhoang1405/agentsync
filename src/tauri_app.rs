@@ -59,6 +59,11 @@ async fn delete_skill(
 }
 
 #[tauri::command]
+async fn quick_sync_skills() -> CommandResult<desktop::SyncResult> {
+    blocking(desktop::quick_sync_skills).await
+}
+
+#[tauri::command]
 async fn sync_history(request: desktop::HistorySyncRequest) -> CommandResult<desktop::SyncResult> {
     blocking(move || desktop::sync_history(request)).await
 }
@@ -89,6 +94,7 @@ pub fn run() {
             push_resources,
             pull_resources,
             delete_skill,
+            quick_sync_skills,
             sync_history,
         ])
         .run(tauri::generate_context!())

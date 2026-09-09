@@ -5,9 +5,12 @@ import {
   BookOpen,
   CheckCircle2,
   Cloud,
+  CloudDownload,
+  CloudUpload,
   FileText,
   Globe2,
   LockKeyhole,
+  RefreshCw,
   Trash2,
 } from "lucide-react";
 
@@ -17,6 +20,7 @@ import type {
   RemoteSkill,
   Skill,
   SkillFile,
+  SyncStatus,
   Visibility,
 } from "../lib/types";
 import { EmptyState } from "./EmptyState";
@@ -89,9 +93,13 @@ export const SkillsView = memo(function SkillsView({ syncEnabled, currentUser }:
       const items = await api.skills();
       if (revision !== localRevision.current) return;
       setLocalSkills(items);
-      setSelected((current) => current ?? (
-        items[0] ? { source: "local", skill: items[0] } : undefined
-      ));
+      setSelected((current) => {
+        if (current?.source === "local") {
+          const updated = items.find((item) => item.id === current.skill.id);
+          return updated ? { source: "local", skill: updated } : undefined;
+        }
+        return current ?? (items[0] ? { source: "local", skill: items[0] } : undefined);
+      });
       setSelectedFile((current) => current ?? items[0]?.files[0]?.path);
     } catch (reason) {
       if (revision === localRevision.current) setError(errorMessage(reason));
@@ -104,9 +112,13 @@ export const SkillsView = memo(function SkillsView({ syncEnabled, currentUser }:
       const items = await api.remoteSkills(refresh);
       if (revision !== remoteRevision.current) return;
       setRemoteSkills(items);
-      setSelected((current) => current ?? (
-        items[0] ? { source: "remote", skill: items[0] } : undefined
-      ));
+      setSelected((current) => {
+        if (current?.source === "remote") {
+          const updated = items.find((item) => item.id === current.skill.id);
+          return updated ? { source: "remote", skill: updated } : undefined;
+        }
+        return current ?? (items[0] ? { source: "remote", skill: items[0] } : undefined);
+      });
       setSelectedVersion((current) => current ?? items[0]?.versions[0]?.version);
       setSelectedFile((current) => current ?? items[0]?.versions[0]?.files[0]?.path);
     } catch (reason) {
@@ -153,6 +165,25 @@ export const SkillsView = memo(function SkillsView({ syncEnabled, currentUser }:
       });
       await loadRemoteSkills(true);
       setNotice(`Pushed ${skill.name} (${result.uploaded} files).`);
+    } catch (reason) {
+      setError(errorMessage(reason));
+    } finally {
+      setBusyId(undefined);
+    }
+  }
+
+  async function quickSyncSkills() {
+    setBusyId("quick-sync");
+    setError(undefined);
+    setNotice(undefined);
+    try {
+      const result = await api.quickSyncSkills();
+      api.clearSkillsCache();
+      api.clearRemoteSkillsCache();
+      await Promise.all([loadLocalSkills(), loadRemoteSkills()]);
+      setNotice(
+        `Pulled all local skills (${result.written + result.metadataUpdated} files updated).`,
+      );
     } catch (reason) {
       setError(errorMessage(reason));
     } finally {
@@ -267,7 +298,21 @@ export const SkillsView = memo(function SkillsView({ syncEnabled, currentUser }:
   return (
     <section className="page view-grid skill-grid">
       <aside className="panel skill-library-panel">
-        <SkillSection title="Local skills" count={localSkills.length}>
+        <SkillSection
+          title="Local skills"
+          count={localSkills.length}
+          headerAction={(
+            <button
+              className="skill-sync-button quick-sync-button"
+              disabled={!syncEnabled || busyId !== undefined || !localSkills.length}
+              onClick={() => void quickSyncSkills()}
+              title={syncEnabled ? "Pull the latest remote copy of every local skill" : "Configure Postgres to pull"}
+            >
+              <RefreshCw className={busyId === "quick-sync" ? "spin" : ""} size={13} />
+              Pull all
+            </button>
+          )}
+        >
           {localSkills.map((skill) => (
             <SkillRow
               key={skill.id}
@@ -275,6 +320,7 @@ export const SkillsView = memo(function SkillsView({ syncEnabled, currentUser }:
               onSelect={() => selectSkill({ source: "local", skill })}
               title={skill.name}
               detail={`${skill.scope} · ${skill.files.length} files`}
+              syncStatus={skill.syncStatus}
               badge={
                 <button
                   className={`visibility-pill ${skillVisibility(skill)}`}
@@ -469,13 +515,14 @@ function SkillSection({ title, count, headerAction, children }: {
   );
 }
 
-function SkillRow({ selected, onSelect, title, detail, badge, action }: {
+function SkillRow({ selected, onSelect, title, detail, badge, action, syncStatus }: {
   selected: boolean;
   onSelect: () => void;
   title: string;
   detail: string;
   badge: React.ReactNode;
   action: React.ReactNode;
+  syncStatus?: SyncStatus;
 }) {
   return (
     <div className={`skill-row ${selected ? "selected" : ""}`}>
@@ -483,8 +530,26 @@ function SkillRow({ selected, onSelect, title, detail, badge, action }: {
         <span className="item-icon"><BookOpen size={16} /></span>
         <span className="item-copy"><strong>{title}</strong><small>{detail}</small></span>
       </button>
-      <div className="skill-row-controls">{badge}{action}</div>
+      <div className="skill-row-controls">
+        <SyncIndicator status={syncStatus} />
+        {badge}{action}
+      </div>
     </div>
+  );
+}
+
+function SyncIndicator({ status }: { status?: SyncStatus }) {
+  if (!status || status === "synced") return null;
+  const newer = status === "newer";
+  const Icon = newer ? CloudUpload : CloudDownload;
+  return (
+    <span
+      className={`sync-indicator ${status}`}
+      title={newer ? "Local copy is newer than remote" : "Local copy is older than remote"}
+      aria-label={newer ? "Local copy is newer than remote" : "Local copy is older than remote"}
+    >
+      <Icon size={14} />
+    </span>
   );
 }
 

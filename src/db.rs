@@ -14,7 +14,8 @@ use tokio_postgres_rustls::MakeRustlsConnect;
 
 use crate::model::{
     AgentName, LocalResource, RemoteResource, ResourceKind, ResourceSummary, Scope,
-    StoredSkillVersionResource, SyncContext, Visibility, parse_kind, parse_visibility, skill_name,
+    StoredResourceState, StoredSkillVersionResource, SyncContext, Visibility, parse_kind,
+    parse_visibility, skill_name,
 };
 
 const MIGRATION: &str = include_str!("../migrations/0001_initial.sql");
@@ -449,6 +450,42 @@ impl Database {
                     author_email: row.get(4),
                     modified_at: row.get(5),
                     sync_version: version,
+                })
+            })
+            .collect()
+    }
+
+    pub fn owned_resource_states(
+        &mut self,
+        author_email: &str,
+        agent: AgentName,
+        kind: ResourceKind,
+    ) -> Result<Vec<StoredResourceState>> {
+        let rows = self
+            .client
+            .query(
+                r#"
+                SELECT scope, project_key, path, content_sha256, source_modified_at
+                FROM agentsync_resources
+                WHERE author_email = $1 AND agent = $2 AND kind = $3
+                ORDER BY scope, project_key, path
+                "#,
+                &[&author_email, &agent.as_str(), &kind.as_str()],
+            )
+            .context("could not inspect remote sync state")?;
+        rows.into_iter()
+            .map(|row| {
+                let scope = match row.get::<_, &str>(0) {
+                    "global" => Scope::Global,
+                    "project" => Scope::Project,
+                    value => anyhow::bail!("invalid scope `{value}` in database"),
+                };
+                Ok(StoredResourceState {
+                    scope,
+                    project_key: row.get(1),
+                    path: row.get(2),
+                    sha256: row.get(3),
+                    modified_at: row.get(4),
                 })
             })
             .collect()

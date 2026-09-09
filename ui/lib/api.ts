@@ -68,6 +68,7 @@ export const api = {
     invoke<SyncResult>("pull_resources", { request }),
   deleteSkill: (request: DeleteSkillRequest) =>
     invoke<DeleteSkillResult>("delete_skill", { request }),
+  quickSyncSkills: () => invoke<SyncResult>("quick_sync_skills"),
   syncHistory: (request: HistorySyncRequest) =>
     invoke<SyncResult>("sync_history", { request }),
 };
