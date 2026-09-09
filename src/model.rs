@@ -213,6 +213,16 @@ pub struct StoredResource {
     pub resource: RemoteResource,
 }
 
+#[derive(Clone, Debug)]
+pub struct StoredSkillVersionResource {
+    pub scope: Scope,
+    pub project_key: String,
+    pub skill_name: String,
+    pub version: i64,
+    pub created_at: String,
+    pub resource: RemoteResource,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourceSummary {
@@ -229,6 +239,21 @@ pub struct ResourceSummary {
 
 pub fn sha256(content: &[u8]) -> String {
     hex::encode(Sha256::digest(content))
+}
+
+pub fn skill_path_parts(path: &str) -> Option<(&str, &str)> {
+    let marker = if let Some(rest) = path.strip_prefix("skills/") {
+        rest
+    } else if let Some(rest) = path.strip_prefix(".agents/skills/") {
+        rest
+    } else {
+        path.strip_prefix(".codex/skills/")?
+    };
+    marker.split_once('/')
+}
+
+pub fn skill_name(path: &str) -> Option<&str> {
+    skill_path_parts(path).map(|(name, _)| name)
 }
 
 /// Postgres stores timestamps with microsecond precision, while filesystems may
@@ -287,5 +312,22 @@ mod tests {
             original,
             database + Duration::from_secs(1)
         ));
+    }
+
+    #[test]
+    fn skill_paths_support_global_and_project_locations() {
+        assert_eq!(
+            skill_path_parts("skills/review/SKILL.md"),
+            Some(("review", "SKILL.md"))
+        );
+        assert_eq!(
+            skill_path_parts(".agents/skills/review/references/checks.md"),
+            Some(("review", "references/checks.md"))
+        );
+        assert_eq!(
+            skill_path_parts(".codex/skills/review/SKILL.md"),
+            Some(("review", "SKILL.md"))
+        );
+        assert_eq!(skill_path_parts("AGENTS.md"), None);
     }
 }

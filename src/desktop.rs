@@ -1,7 +1,7 @@
 //! Application services exposed to the Tauri desktop shell.
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fs,
     path::{Path, PathBuf},
 };
@@ -19,7 +19,7 @@ use crate::{
     },
     model::{
         AgentName, LocalResource, ResourceKind, ResourceSelection, ResourceSummary, Scope,
-        SyncContext, Visibility, sha256,
+        SyncContext, Visibility, sha256, skill_name, skill_path_parts,
     },
     project,
 };
@@ -82,6 +82,15 @@ pub struct RemoteSkillView {
     pub author_email: String,
     pub visibility: Visibility,
     pub sync_version: i64,
+    pub versions: Vec<RemoteSkillVersionView>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteSkillVersionView {
+    pub version: i64,
+    pub created_at: String,
+    pub visibility: Visibility,
     pub files: Vec<SkillFileView>,
 }
 
@@ -109,6 +118,26 @@ pub struct PullRequest {
     #[serde(default)]
     pub overwrite: bool,
     pub skill_name: Option<String>,
+    pub skill_version: Option<i64>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteSkillRequest {
+    pub location: String,
+    pub scope: Scope,
+    pub project_root: Option<String>,
+    pub project_key: Option<String>,
+    pub author: Option<String>,
+    pub skill_name: String,
+    pub version: Option<i64>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteSkillResult {
+    pub removed_files: usize,
+    pub removed_versions: usize,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -202,10 +231,10 @@ pub fn list_remote_skills() -> Result<Vec<RemoteSkillView>> {
     for stored_resource in stored {
         let resource = stored_resource.resource;
         verify_remote(&resource)?;
-        let Some((name, relative)) = skill_parts(&resource.path) else {
+        let Some((_, relative)) = skill_path_parts(&resource.path) else {
             continue;
         };
-        let name = name.to_owned();
+        let name = stored_resource.skill_name;
         let relative = relative.to_owned();
         let Ok(content) = String::from_utf8(resource.content) else {
             continue;
@@ -224,10 +253,28 @@ pub fn list_remote_skills() -> Result<Vec<RemoteSkillView>> {
                 author_email: resource.author_email,
                 visibility: resource.visibility,
                 sync_version: resource.sync_version,
-                files: Vec::new(),
+                versions: Vec::new(),
             });
-        skill.sync_version = skill.sync_version.max(resource.sync_version);
-        skill.files.push(SkillFileView {
+        let version = match skill
+            .versions
+            .iter_mut()
+            .find(|version| version.version == stored_resource.version)
+        {
+            Some(version) => version,
+            None => {
+                skill.versions.push(RemoteSkillVersionView {
+                    version: stored_resource.version,
+                    created_at: stored_resource.created_at,
+                    visibility: resource.visibility,
+                    files: Vec::new(),
+                });
+                skill
+                    .versions
+                    .last_mut()
+                    .expect("version was just inserted")
+            }
+        };
+        version.files.push(SkillFileView {
             path: resource.path,
             title: relative.clone(),
             markdown: relative.ends_with(".md") || relative.ends_with(".markdown"),
@@ -235,7 +282,16 @@ pub fn list_remote_skills() -> Result<Vec<RemoteSkillView>> {
         });
     }
     for skill in skills.values_mut() {
-        sort_skill_files(&mut skill.files);
+        skill
+            .versions
+            .sort_by_key(|version| std::cmp::Reverse(version.version));
+        for version in &mut skill.versions {
+            sort_skill_files(&mut version.files);
+        }
+        if let Some(latest) = skill.versions.first() {
+            skill.sync_version = latest.version;
+            skill.visibility = latest.visibility;
+        }
     }
     Ok(skills.into_values().collect())
 }
@@ -302,13 +358,31 @@ pub fn pull(request: PullRequest) -> Result<SyncResult> {
     let adapter = adapter(AgentName::Codex)?;
     let (config, mut database) = connected_database()?;
     let author = request.author.as_deref().unwrap_or(&config.email);
-    let mut remote = database.pull(
-        &config.email,
-        author,
-        AgentName::Codex,
-        &context,
-        selection.exact(),
-    )?;
+    let mut remote = if let Some(version) = request.skill_version {
+        let name = request
+            .skill_name
+            .as_deref()
+            .context("select a skill before choosing a version")?;
+        if selection != ResourceSelection::Skills || version < 1 {
+            bail!("invalid selected skill version");
+        }
+        database.pull_skill_version(
+            &config.email,
+            author,
+            AgentName::Codex,
+            &context,
+            name,
+            version,
+        )?
+    } else {
+        database.pull(
+            &config.email,
+            author,
+            AgentName::Codex,
+            &context,
+            selection.exact(),
+        )?
+    };
     filter_remote_skill(&mut remote, request.skill_name.as_deref())?;
 
     let local = adapter.discover(&context, selection)?;
@@ -344,6 +418,66 @@ pub fn pull(request: PullRequest) -> Result<SyncResult> {
     }
     result.resources = list_for_context(&mut database, &config, &context, selection)?;
     Ok(result)
+}
+
+pub fn delete_skill(request: DeleteSkillRequest) -> Result<DeleteSkillResult> {
+    validate_skill_selection(ResourceSelection::Skills, Some(&request.skill_name))?;
+    match request.location.as_str() {
+        "local" => {
+            if request.version.is_some() {
+                bail!("local skills do not have selectable versions");
+            }
+            let context = requested_context(
+                request.scope,
+                request.project_root.as_deref(),
+                request.project_key.as_deref(),
+            )?;
+            let adapter = adapter(AgentName::Codex)?;
+            let mut discovery = adapter.discover(&context, ResourceSelection::Skills)?;
+            filter_local_skill(&mut discovery.resources, Some(&request.skill_name))?;
+            let directories = discovery
+                .resources
+                .iter()
+                .filter_map(skill_directory)
+                .collect::<BTreeSet<_>>();
+            let removed_files = discovery.resources.len();
+            for directory in &directories {
+                fs::remove_dir_all(directory).with_context(|| {
+                    format!("could not remove local skill {}", directory.display())
+                })?;
+            }
+            Ok(DeleteSkillResult {
+                removed_files,
+                removed_versions: 0,
+            })
+        }
+        "remote" => {
+            let (config, mut database) = connected_database()?;
+            let author = request.author.as_deref().unwrap_or(&config.email);
+            if author != config.email {
+                bail!("only the skill author can delete a remote skill");
+            }
+            let project_key = request.project_key.as_deref().unwrap_or_default();
+            if (request.scope == Scope::Global && !project_key.is_empty())
+                || (request.scope == Scope::Project && project_key.is_empty())
+            {
+                bail!("invalid project key for remote skill deletion");
+            }
+            let (removed_versions, removed_files) = database.delete_skill(
+                &config.email,
+                AgentName::Codex,
+                request.scope,
+                project_key,
+                &request.skill_name,
+                request.version,
+            )?;
+            Ok(DeleteSkillResult {
+                removed_files,
+                removed_versions,
+            })
+        }
+        value => bail!("unknown skill location `{value}`"),
+    }
 }
 
 pub fn sync_history(request: HistorySyncRequest) -> Result<SyncResult> {
@@ -460,7 +594,7 @@ fn collect_skills(
 ) -> Result<()> {
     let discovery = adapter.discover(&context, ResourceSelection::Skills)?;
     for resource in discovery.resources {
-        let Some((name, relative)) = skill_parts(&resource.path) else {
+        let Some((name, relative)) = skill_path_parts(&resource.path) else {
             continue;
         };
         let name = name.to_owned();
@@ -499,20 +633,13 @@ fn sort_skill_files(files: &mut [SkillFileView]) {
     });
 }
 
-fn skill_parts(path: &str) -> Option<(&str, &str)> {
-    let marker = if let Some(rest) = path.strip_prefix("skills/") {
-        rest
-    } else if let Some(rest) = path.strip_prefix(".agents/skills/") {
-        rest
-    } else {
-        path.strip_prefix(".codex/skills/")?
-    };
-    let (name, relative) = marker.split_once('/')?;
-    Some((name, relative))
-}
-
-fn skill_name(path: &str) -> Option<&str> {
-    skill_parts(path).map(|(name, _)| name)
+fn skill_directory(resource: &LocalResource) -> Option<PathBuf> {
+    let (name, relative) = skill_path_parts(&resource.path)?;
+    let mut directory = resource.source.clone();
+    for _ in Path::new(relative).components() {
+        directory.pop();
+    }
+    (directory.file_name().and_then(|value| value.to_str()) == Some(name)).then_some(directory)
 }
 
 fn validate_skill_selection(

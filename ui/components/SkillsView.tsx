@@ -8,6 +8,7 @@ import {
   FileText,
   Globe2,
   LockKeyhole,
+  Trash2,
 } from "lucide-react";
 
 import { api, errorMessage } from "../lib/api";
@@ -27,9 +28,10 @@ type SelectedSkill =
 
 interface SkillsViewProps {
   syncEnabled: boolean;
+  currentUser?: string;
 }
 
-export const SkillsView = memo(function SkillsView({ syncEnabled }: SkillsViewProps) {
+export const SkillsView = memo(function SkillsView({ syncEnabled, currentUser }: SkillsViewProps) {
   const [localSkills, setLocalSkills] = useState<Skill[]>(api.cachedSkills() ?? []);
   const [remoteSkills, setRemoteSkills] = useState<RemoteSkill[]>(
     api.cachedRemoteSkills() ?? [],
@@ -37,6 +39,7 @@ export const SkillsView = memo(function SkillsView({ syncEnabled }: SkillsViewPr
   const [projects, setProjects] = useState<Project[]>(api.cachedProjects() ?? []);
   const [selected, setSelected] = useState<SelectedSkill>();
   const [selectedFile, setSelectedFile] = useState<string>();
+  const [selectedVersion, setSelectedVersion] = useState<number>();
   const [author, setAuthor] = useState("all");
   const [visibility, setVisibility] = useState<Record<string, Visibility>>({});
   const [busyId, setBusyId] = useState<string>();
@@ -70,7 +73,13 @@ export const SkillsView = memo(function SkillsView({ syncEnabled }: SkillsViewPr
       : remoteSkills.filter((skill) => skill.authorEmail === author),
     [author, remoteSkills],
   );
-  const files = selected?.skill.files ?? [];
+  const remoteVersion = selected?.source === "remote"
+    ? selected.skill.versions.find((version) => version.version === selectedVersion)
+      ?? selected.skill.versions[0]
+    : undefined;
+  const files = selected?.source === "local"
+    ? selected.skill.files
+    : remoteVersion?.files ?? [];
   const file = files.find((item) => item.path === selectedFile) ?? files[0];
 
   async function loadLocalSkills(refresh = false) {
@@ -98,7 +107,8 @@ export const SkillsView = memo(function SkillsView({ syncEnabled }: SkillsViewPr
       setSelected((current) => current ?? (
         items[0] ? { source: "remote", skill: items[0] } : undefined
       ));
-      setSelectedFile((current) => current ?? items[0]?.files[0]?.path);
+      setSelectedVersion((current) => current ?? items[0]?.versions[0]?.version);
+      setSelectedFile((current) => current ?? items[0]?.versions[0]?.files[0]?.path);
     } catch (reason) {
       if (revision === remoteRevision.current) setError(errorMessage(reason));
     }
@@ -106,7 +116,13 @@ export const SkillsView = memo(function SkillsView({ syncEnabled }: SkillsViewPr
 
   function selectSkill(next: SelectedSkill) {
     setSelected(next);
-    setSelectedFile(next.skill.files[0]?.path);
+    if (next.source === "remote") {
+      setSelectedVersion(next.skill.versions[0]?.version);
+      setSelectedFile(next.skill.versions[0]?.files[0]?.path);
+    } else {
+      setSelectedVersion(undefined);
+      setSelectedFile(next.skill.files[0]?.path);
+    }
     setError(undefined);
     setNotice(undefined);
   }
@@ -144,7 +160,7 @@ export const SkillsView = memo(function SkillsView({ syncEnabled }: SkillsViewPr
     }
   }
 
-  async function pullSkill(skill: RemoteSkill) {
+  async function pullSkill(skill: RemoteSkill, version = skill.syncVersion) {
     const project = skill.scope === "project"
       ? projects.find((item) => item.key === skill.projectKey)
       : undefined;
@@ -164,13 +180,87 @@ export const SkillsView = memo(function SkillsView({ syncEnabled }: SkillsViewPr
         author: skill.authorEmail,
         overwrite: true,
         skillName: skill.name,
+        skillVersion: version,
       });
       await loadLocalSkills(true);
-      setNotice(`Pulled ${skill.name} (${result.written} files updated).`);
+      setNotice(`Pulled ${skill.name} v${version} (${result.written} files updated).`);
     } catch (reason) {
       setError(errorMessage(reason));
     } finally {
       setBusyId(undefined);
+    }
+  }
+
+  async function removeLocalSkill(skill: Skill) {
+    if (!window.confirm(`Remove the local skill “${skill.name}” and all of its files?`)) return;
+    setBusyId(`local:${skill.id}`);
+    setError(undefined);
+    setNotice(undefined);
+    try {
+      const result = await api.deleteSkill({
+        location: "local",
+        scope: skill.scope,
+        projectRoot: skill.projectPath,
+        projectKey: skill.projectKey,
+        skillName: skill.name,
+      });
+      if (selected?.source === "local" && selected.skill.id === skill.id) {
+        setSelected(undefined);
+        setSelectedFile(undefined);
+      }
+      await loadLocalSkills(true);
+      setNotice(`Removed ${skill.name} (${result.removedFiles} files).`);
+    } catch (reason) {
+      setError(errorMessage(reason));
+    } finally {
+      setBusyId(undefined);
+    }
+  }
+
+  async function removeRemoteSkill(skill: RemoteSkill, version?: number) {
+    const target = version === undefined ? "all versions" : `version ${version}`;
+    if (!window.confirm(`Remove ${target} of the remote skill “${skill.name}”?`)) return;
+    setBusyId(`remote:${skill.id}`);
+    setError(undefined);
+    setNotice(undefined);
+    try {
+      const result = await api.deleteSkill({
+        location: "remote",
+        scope: skill.scope,
+        projectKey: skill.projectKey,
+        author: skill.authorEmail,
+        skillName: skill.name,
+        version,
+      });
+      const items = await api.remoteSkills(true);
+      setRemoteSkills(items);
+      const refreshed = items.find((item) => item.id === skill.id);
+      if (refreshed) {
+        setSelected({ source: "remote", skill: refreshed });
+        setSelectedVersion(refreshed.versions[0]?.version);
+        setSelectedFile(refreshed.versions[0]?.files[0]?.path);
+      } else if (selected?.source === "remote" && selected.skill.id === skill.id) {
+        setSelected(undefined);
+        setSelectedVersion(undefined);
+        setSelectedFile(undefined);
+      }
+      setNotice(
+        version === undefined
+          ? `Removed ${skill.name} (${result.removedVersions} versions).`
+          : `Removed ${skill.name} v${version}.`,
+      );
+    } catch (reason) {
+      setError(errorMessage(reason));
+    } finally {
+      setBusyId(undefined);
+    }
+  }
+
+  function chooseVersion(version: number) {
+    setSelectedVersion(version);
+    if (selected?.source === "remote") {
+      const files = selected.skill.versions.find((item) => item.version === version)?.files;
+      setSelectedFile(files?.[0]?.path);
     }
   }
 
@@ -198,15 +288,26 @@ export const SkillsView = memo(function SkillsView({ syncEnabled }: SkillsViewPr
                 </button>
               }
               action={
-                <button
-                  className="skill-sync-button"
-                  disabled={!syncEnabled || busyId !== undefined}
-                  onClick={() => void pushSkill(skill)}
-                  title={syncEnabled ? `Push ${skill.name}` : "Configure Postgres to push"}
-                >
-                  <ArrowUpFromLine size={13} />
-                  Push
-                </button>
+                <>
+                  <button
+                    className="skill-sync-button"
+                    disabled={!syncEnabled || busyId !== undefined}
+                    onClick={() => void pushSkill(skill)}
+                    title={syncEnabled ? `Push ${skill.name}` : "Configure Postgres to push"}
+                  >
+                    <ArrowUpFromLine size={13} />
+                    Push
+                  </button>
+                  <button
+                    className="skill-remove-button"
+                    disabled={busyId !== undefined}
+                    onClick={() => void removeLocalSkill(skill)}
+                    title={`Remove local skill ${skill.name}`}
+                    aria-label={`Remove local skill ${skill.name}`}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </>
               }
             />
           ))}
@@ -234,18 +335,31 @@ export const SkillsView = memo(function SkillsView({ syncEnabled }: SkillsViewPr
               selected={selected?.source === "remote" && selected.skill.id === skill.id}
               onSelect={() => selectSkill({ source: "remote", skill })}
               title={skill.name}
-              detail={`${skill.authorEmail} · ${skill.scope}`}
+              detail={`${skill.authorEmail} · ${skill.scope} · ${skill.versions.length} versions`}
               badge={<span className={`visibility-pill ${skill.visibility}`}>{skill.visibility}</span>}
               action={
-                <button
-                  className="skill-sync-button"
-                  disabled={!syncEnabled || busyId !== undefined}
-                  onClick={() => void pullSkill(skill)}
-                  title={syncEnabled ? `Pull ${skill.name}` : "Configure Postgres to pull"}
-                >
-                  <ArrowDownToLine size={13} />
-                  Pull
-                </button>
+                <>
+                  <button
+                    className="skill-sync-button"
+                    disabled={!syncEnabled || busyId !== undefined}
+                    onClick={() => void pullSkill(skill)}
+                    title={syncEnabled ? `Pull ${skill.name}` : "Configure Postgres to pull"}
+                  >
+                    <ArrowDownToLine size={13} />
+                    Pull
+                  </button>
+                  <button
+                    className="skill-remove-button"
+                    disabled={busyId !== undefined || skill.authorEmail !== currentUser}
+                    onClick={() => void removeRemoteSkill(skill)}
+                    title={skill.authorEmail === currentUser
+                      ? `Remove every remote version of ${skill.name}`
+                      : "Only the skill author can remove it"}
+                    aria-label={`Remove remote skill ${skill.name}`}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </>
               }
             />
           ))}
@@ -270,10 +384,42 @@ export const SkillsView = memo(function SkillsView({ syncEnabled }: SkillsViewPr
             </div>
             <p className="path-label" title={skillLocation(selected)}>{skillLocation(selected)}</p>
             {selected.source === "remote" && (
-              <p className="remote-meta">
-                <span>{selected.skill.authorEmail}</span>
-                <span>v{selected.skill.syncVersion}</span>
-              </p>
+              <>
+                <p className="remote-meta">
+                  <span>{selected.skill.authorEmail}</span>
+                  <span>{remoteVersion ? formatVersionDate(remoteVersion.createdAt) : ""}</span>
+                </p>
+                <div className="remote-version-actions">
+                  <select
+                    aria-label="Remote skill version"
+                    value={remoteVersion?.version ?? ""}
+                    onChange={(event) => chooseVersion(Number(event.target.value))}
+                  >
+                    {selected.skill.versions.map((version) => (
+                      <option value={version.version} key={version.version}>
+                        Version {version.version}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    className="skill-sync-button"
+                    disabled={!remoteVersion || busyId !== undefined}
+                    onClick={() => remoteVersion && void pullSkill(selected.skill, remoteVersion.version)}
+                    title="Pull the selected version"
+                  >
+                    <ArrowDownToLine size={13} /> Pull
+                  </button>
+                  <button
+                    className="skill-remove-button"
+                    disabled={!remoteVersion || busyId !== undefined || selected.skill.authorEmail !== currentUser}
+                    onClick={() => remoteVersion && void removeRemoteSkill(selected.skill, remoteVersion.version)}
+                    title="Delete the selected version"
+                    aria-label="Delete the selected version"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              </>
             )}
             <div className="scroll-list file-list">
               {files.map((item) => (
@@ -347,6 +493,11 @@ function skillLocation(selected: SelectedSkill) {
     return selected.skill.scope === "global" ? "Remote Codex home" : selected.skill.projectKey;
   }
   return selected.skill.projectPath ?? "Codex home";
+}
+
+function formatVersionDate(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString();
 }
 
 function SkillDocument({ file }: { file: SkillFile }) {
