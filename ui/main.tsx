@@ -69,7 +69,10 @@ function App() {
       </nav>
       <main className="workspace">
         <div className={`page-slot ${page === "skills" ? "active" : ""}`}>
-          <SkillsView syncEnabled={status?.configured ?? false} />
+          <SkillsView
+            syncEnabled={status?.configured ?? false}
+            currentUser={status?.email}
+          />
         </div>
         <div className={`page-slot ${page === "history" ? "active" : ""}`}>
           <HistoryView syncEnabled={status?.configured ?? false} />

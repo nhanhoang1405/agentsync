@@ -42,6 +42,13 @@ export interface RemoteSkill {
   authorEmail: string;
   visibility: Visibility;
   syncVersion: number;
+  versions: RemoteSkillVersion[];
+}
+
+export interface RemoteSkillVersion {
+  version: number;
+  createdAt: string;
+  visibility: Visibility;
   files: SkillFile[];
 }
 
@@ -97,6 +104,21 @@ export interface PushRequest {
   skillName?: string;
 }
 
+export interface DeleteSkillRequest {
+  location: "local" | "remote";
+  scope: Scope;
+  projectRoot?: string;
+  projectKey?: string;
+  author?: string;
+  skillName: string;
+  version?: number;
+}
+
+export interface DeleteSkillResult {
+  removedFiles: number;
+  removedVersions: number;
+}
+
 export interface PullRequest {
   scope: Scope;
   projectRoot?: string;
@@ -105,6 +127,7 @@ export interface PullRequest {
   author?: string;
   overwrite: boolean;
   skillName?: string;
+  skillVersion?: number;
 }
 
 export interface HistorySyncRequest {

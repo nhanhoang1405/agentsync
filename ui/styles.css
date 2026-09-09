@@ -59,8 +59,12 @@ button { color: inherit; }
 .skill-row-controls { display: flex; align-items: center; gap: 4px; padding-right: 7px; }
 .skill-sync-button { display: inline-flex; align-items: center; gap: 3px; padding: 4px 6px; color: var(--green); border: 1px solid #bfd0c4; border-radius: 6px; background: #fff; cursor: pointer; font-size: 9px; font-weight: 700; }
 .skill-sync-button:disabled { opacity: .45; cursor: default; }
+.skill-remove-button { display: inline-flex; align-items: center; justify-content: center; padding: 4px; color: #a64c3a; border: 1px solid #e2c4bc; border-radius: 6px; background: #fff; cursor: pointer; }
+.skill-remove-button:disabled { opacity: .35; cursor: default; }
 .remote-meta { display: flex; justify-content: space-between; gap: 6px; margin: -3px 17px 12px; color: var(--muted); font-size: 9px; }
 .remote-meta span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.remote-version-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 5px; margin: 0 13px 11px; }
+.remote-version-actions select { min-width: 0; padding-block: 6px; }
 .panel-message { margin: 7px 10px 10px; }
 .panel-heading { display: flex; align-items: center; justify-content: space-between; padding: 21px 18px 15px; }
 .panel-heading.compact { padding-bottom: 10px; }
@@ -177,7 +181,7 @@ button.visibility-pill { cursor: pointer; }
 @media (prefers-color-scheme: dark) {
   :root { color: #e3e7e0; background: #191d19; --ink: #e3e7e0; --muted: #939a91; --line: #343b34; --panel: #222722; --canvas: #191d19; --green-soft: #293a30; --orange-soft: #442f27; }
   .sidebar { background: #141714; }
-  .search-field, select, .settings-dialog input, .button.secondary, .skill-sync-button { background: #1b201b; }
+  .search-field, select, .settings-dialog input, .button.secondary, .skill-sync-button, .skill-remove-button { background: #1b201b; }
   .list-item:hover, .list-item.selected, .skill-row:hover, .skill-row.selected, .file-item:hover, .file-item.selected, .session-item:hover, .session-item.selected, .message.user { background: #292f29; }
   .markdown { color: #cbd0c9; }
   .markdown h1, .markdown h2, .markdown h3 { color: var(--ink); }
