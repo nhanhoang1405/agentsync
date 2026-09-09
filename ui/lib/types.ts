@@ -122,6 +122,11 @@ export interface DeleteSkillResult {
   removedVersions: number;
 }
 
+export interface CleanupResult {
+  removedLocal: number;
+  removedRemote: number;
+}
+
 export interface PullRequest {
   scope: Scope;
   projectRoot?: string;
