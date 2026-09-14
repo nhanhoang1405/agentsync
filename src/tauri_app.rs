@@ -52,6 +52,30 @@ async fn pull_resources(request: desktop::PullRequest) -> CommandResult<desktop:
 }
 
 #[tauri::command]
+async fn delete_skill(
+    request: desktop::DeleteSkillRequest,
+) -> CommandResult<desktop::DeleteSkillResult> {
+    blocking(move || desktop::delete_skill(request)).await
+}
+
+#[tauri::command]
+async fn quick_sync_skills() -> CommandResult<desktop::SyncResult> {
+    blocking(desktop::quick_sync_skills).await
+}
+
+#[tauri::command]
+async fn clean_skills() -> CommandResult<desktop::CleanupResult> {
+    blocking(desktop::clean_skills).await
+}
+
+#[tauri::command]
+async fn clean_history(
+    request: desktop::HistorySyncRequest,
+) -> CommandResult<desktop::CleanupResult> {
+    blocking(move || desktop::clean_history(request)).await
+}
+
+#[tauri::command]
 async fn sync_history(request: desktop::HistorySyncRequest) -> CommandResult<desktop::SyncResult> {
     blocking(move || desktop::sync_history(request)).await
 }
@@ -81,6 +105,10 @@ pub fn run() {
             load_session,
             push_resources,
             pull_resources,
+            delete_skill,
+            quick_sync_skills,
+            clean_skills,
+            clean_history,
             sync_history,
         ])
         .run(tauri::generate_context!())

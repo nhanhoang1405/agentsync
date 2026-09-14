@@ -2,10 +2,13 @@ import { memo, useEffect, useRef, useState } from "react";
 import {
   Bot,
   CalendarDays,
+  CloudDownload,
+  CloudUpload,
   FolderGit2,
   LoaderCircle,
   MessageSquareText,
   RefreshCw,
+  Trash2,
   UserRound,
 } from "lucide-react";
 
@@ -32,6 +35,7 @@ export const HistoryView = memo(function HistoryView({ syncEnabled }: HistoryVie
   const [loadingSessions, setLoadingSessions] = useState(false);
   const [loadingChat, setLoadingChat] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [cleaning, setCleaning] = useState(false);
   const [syncNotice, setSyncNotice] = useState<string>();
   const [visibleMessageCount, setVisibleMessageCount] = useState(MESSAGE_BATCH_SIZE);
   const chatScroll = useRef<HTMLDivElement>(null);
@@ -155,11 +159,40 @@ export const HistoryView = memo(function HistoryView({ syncEnabled }: HistoryVie
     }
   }
 
+  async function cleanProjectHistory() {
+    if (!project || !window.confirm(
+      `Remove local and remote sessions older than three months for “${project.name}”?`,
+    )) return;
+    setCleaning(true);
+    setError(undefined);
+    setSyncNotice(undefined);
+    try {
+      const result = await api.cleanHistory({
+        projectRoot: project.path,
+        projectKey: project.key,
+      });
+      api.clearHistoryCache();
+      const updatedProjects = await api.projects();
+      setProjects(updatedProjects);
+      setProject(updatedProjects.find((item) => item.key === project.key));
+      setSessions([]);
+      setSelectedPath(undefined);
+      setChat(undefined);
+      setSyncNotice(
+        `Removed ${result.removedLocal} local and ${result.removedRemote} remote sessions.`,
+      );
+    } catch (reason) {
+      setError(errorMessage(reason));
+    } finally {
+      setCleaning(false);
+    }
+  }
+
   return (
     <section className="page view-grid history-grid">
       <aside className="panel list-panel">
         <div className="panel-heading">
-          <div><span className="eyebrow">Workspace</span><h1>Projects</h1></div>
+          <span className="eyebrow">Workspace</span>
           <span className="count-badge">{projects.length}</span>
         </div>
         {error && <p className="error-box">{error}</p>}
@@ -175,6 +208,21 @@ export const HistoryView = memo(function HistoryView({ syncEnabled }: HistoryVie
                 <strong>{item.name}</strong>
                 <small>{item.sessionCount} sessions</small>
               </span>
+              {item.syncStatus && item.syncStatus !== "synced" && (
+                <span
+                  className={`sync-indicator ${item.syncStatus}`}
+                  title={item.syncStatus === "newer"
+                    ? "Local history is newer than remote"
+                    : "Local history is older than remote"}
+                  aria-label={item.syncStatus === "newer"
+                    ? "Local history is newer than remote"
+                    : "Local history is older than remote"}
+                >
+                  {item.syncStatus === "newer"
+                    ? <CloudUpload size={14} />
+                    : <CloudDownload size={14} />}
+                </span>
+              )}
             </button>
           ))}
           {loadingProjects && (
@@ -200,15 +248,28 @@ export const HistoryView = memo(function HistoryView({ syncEnabled }: HistoryVie
             <span className="eyebrow">Conversation history</span>
             <h2>{project?.name ?? "Sessions"}</h2>
           </div>
-          <button
-            className="button primary history-sync-button"
-            disabled={!syncEnabled || !project || syncing}
-            onClick={() => void syncProjectHistory()}
-            title={syncEnabled ? "Sync every conversation in this project" : "Configure Postgres to sync"}
-          >
-            <RefreshCw className={syncing ? "spin" : ""} size={14} />
-            {syncing ? "Syncing…" : "Sync all"}
-          </button>
+          <div className="history-heading-actions">
+            <button
+              className="button secondary history-sync-button"
+              disabled={!syncEnabled || !project || syncing || cleaning}
+              onClick={() => void cleanProjectHistory()}
+              title={syncEnabled
+                ? "Remove local and remote sessions older than three months"
+                : "Configure Postgres to clean history"}
+            >
+              <Trash2 size={14} />
+              {cleaning ? "Cleaning…" : "Clean"}
+            </button>
+            <button
+              className="button primary history-sync-button"
+              disabled={!syncEnabled || !project || syncing || cleaning}
+              onClick={() => void syncProjectHistory()}
+              title={syncEnabled ? "Sync every conversation in this project" : "Configure Postgres to sync"}
+            >
+              <RefreshCw className={syncing ? "spin" : ""} size={14} />
+              {syncing ? "Syncing…" : "Sync all"}
+            </button>
+          </div>
         </div>
         {syncNotice && <p className="success-box session-notice">{syncNotice}</p>}
         <div className="scroll-list session-list">

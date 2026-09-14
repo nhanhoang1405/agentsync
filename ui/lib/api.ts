@@ -3,6 +3,9 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AppStatus,
   ChatSession,
+  CleanupResult,
+  DeleteSkillRequest,
+  DeleteSkillResult,
   HistorySyncRequest,
   Project,
   PullRequest,
@@ -64,6 +67,12 @@ export const api = {
     invoke<SyncResult>("push_resources", { request }),
   pull: (request: PullRequest) =>
     invoke<SyncResult>("pull_resources", { request }),
+  deleteSkill: (request: DeleteSkillRequest) =>
+    invoke<DeleteSkillResult>("delete_skill", { request }),
+  quickSyncSkills: () => invoke<SyncResult>("quick_sync_skills"),
+  cleanSkills: () => invoke<CleanupResult>("clean_skills"),
+  cleanHistory: (request: HistorySyncRequest) =>
+    invoke<CleanupResult>("clean_history", { request }),
   syncHistory: (request: HistorySyncRequest) =>
     invoke<SyncResult>("sync_history", { request }),
 };

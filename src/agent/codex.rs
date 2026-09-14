@@ -714,8 +714,8 @@ mod tests {
 
         let adapter = CodexAdapter { home };
         let roots = adapter.known_project_roots().unwrap();
-        assert!(roots.contains(&configured));
-        assert!(roots.contains(&session_project));
+        assert!(roots.contains(&fs::canonicalize(configured).unwrap()));
+        assert!(roots.contains(&fs::canonicalize(session_project).unwrap()));
     }
 
     #[test]

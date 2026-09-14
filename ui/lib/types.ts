@@ -1,6 +1,7 @@
 export type Scope = "global" | "project";
 export type Visibility = "private" | "public";
 export type ResourceKind = "tools" | "skills" | "histories";
+export type SyncStatus = "newer" | "older" | "synced";
 
 export interface AppStatus {
   configured: boolean;
@@ -16,6 +17,7 @@ export interface Project {
   path: string;
   sessionCount: number;
   latestSessionAt?: string;
+  syncStatus?: SyncStatus;
 }
 
 export interface SkillFile {
@@ -32,6 +34,7 @@ export interface Skill {
   projectKey: string;
   projectPath?: string;
   files: SkillFile[];
+  syncStatus?: SyncStatus;
 }
 
 export interface RemoteSkill {
@@ -42,6 +45,13 @@ export interface RemoteSkill {
   authorEmail: string;
   visibility: Visibility;
   syncVersion: number;
+  versions: RemoteSkillVersion[];
+}
+
+export interface RemoteSkillVersion {
+  version: number;
+  createdAt: string;
+  visibility: Visibility;
   files: SkillFile[];
 }
 
@@ -97,6 +107,26 @@ export interface PushRequest {
   skillName?: string;
 }
 
+export interface DeleteSkillRequest {
+  location: "local" | "remote";
+  scope: Scope;
+  projectRoot?: string;
+  projectKey?: string;
+  author?: string;
+  skillName: string;
+  version?: number;
+}
+
+export interface DeleteSkillResult {
+  removedFiles: number;
+  removedVersions: number;
+}
+
+export interface CleanupResult {
+  removedLocal: number;
+  removedRemote: number;
+}
+
 export interface PullRequest {
   scope: Scope;
   projectRoot?: string;
@@ -105,6 +135,7 @@ export interface PullRequest {
   author?: string;
   overwrite: boolean;
   skillName?: string;
+  skillVersion?: number;
 }
 
 export interface HistorySyncRequest {
