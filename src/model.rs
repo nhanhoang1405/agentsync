@@ -1,4 +1,4 @@
-//! Shared domain types used by the desktop app, agent adapters, and database layer.
+//! Shared domain types used by the terminal app, agent adapters, and database layer.
 
 use std::{
     fmt,

@@ -40,6 +40,7 @@ CREATE INDEX IF NOT EXISTS agentsync_skill_versions_lookup_idx
 
 -- Existing installations have only the latest copy. Seed it as the first
 -- browsable snapshot without changing its displayed sync version.
+WITH seeded_versions AS (
 INSERT INTO agentsync_skill_versions (
     agent, scope, project_key, skill_name, version, visibility, author_email, created_at
 )
@@ -69,15 +70,16 @@ GROUP BY
         WHEN path LIKE 'skills/%/%' THEN split_part(path, '/', 2)
         ELSE split_part(path, '/', 3)
     END
-ON CONFLICT DO NOTHING;
-
+ON CONFLICT DO NOTHING
+RETURNING id, agent, scope, project_key, skill_name, author_email
+)
 INSERT INTO agentsync_skill_version_files (
     skill_version_id, path, content, content_sha256, source_modified_at
 )
 SELECT version.id, resource.path, resource.content, resource.content_sha256,
        resource.source_modified_at
 FROM agentsync_resources resource
-JOIN agentsync_skill_versions version
+JOIN seeded_versions version
   ON version.agent = resource.agent
  AND version.scope = resource.scope
  AND version.project_key = resource.project_key
