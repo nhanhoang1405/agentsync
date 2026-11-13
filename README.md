@@ -4,10 +4,10 @@ AgentSync is a Rust terminal app for browsing and synchronizing Codex skills and
 
 ## Install
 
-Requires Rust 1.88 or newer, Cargo, and a C compiler for bundled SQLite. Install from the GitHub source branch:
+Requires Rust 1.88 or newer, Cargo, and a C compiler for bundled SQLite. Install from the GitHub `main` branch:
 
 ```sh
-cargo install --git https://github.com/nhanhoang1405/agentsync --branch develop --locked agentsync
+cargo install --git https://github.com/nhanhoang1405/agentsync --branch main --locked agentsync
 ```
 
 Ensure Cargo's binary directory (`~/.cargo/bin` on Linux/macOS, `%USERPROFILE%\.cargo\bin` on Windows) is on your `PATH`.
@@ -15,7 +15,7 @@ Ensure Cargo's binary directory (`~/.cargo/bin` on Linux/macOS, `%USERPROFILE%\.
 Update an existing installation with:
 
 ```sh
-cargo install --git https://github.com/nhanhoang1405/agentsync --branch develop --locked --force agentsync
+cargo install --git https://github.com/nhanhoang1405/agentsync --branch main --locked --force agentsync
 ```
 
 ## Run
