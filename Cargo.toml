@@ -2,17 +2,12 @@
 name = "agentsync"
 version = "0.2.0"
 edition = "2024"
-description = "A cross-platform desktop client for synchronizing coding-agent resources"
+description = "A terminal client for synchronizing coding-agent resources"
 authors = ["AgentSync contributors"]
 license = "MIT"
 repository = "https://github.com/nhanhoang1405/agentsync"
-rust-version = "1.85"
-
-[lib]
-crate-type = ["staticlib", "cdylib", "rlib"]
-
-[build-dependencies]
-tauri-build = { version = "2", features = [] }
+rust-version = "1.88"
+include = ["src/**", "migrations/**", "scripts/*.py", "Cargo.toml", "Cargo.lock", "README.md", "CHANGELOG.md", "LICENSE"]
 
 [dependencies]
 anyhow = "1.0"
@@ -26,10 +21,20 @@ rustls-pemfile = "2.2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
-tauri = { version = "2", features = [] }
-tauri-plugin-dialog = "2"
 tempfile = "3.20"
 toml = "0.9"
 toml_edit = "0.23"
 tokio-postgres-rustls = "0.13"
 walkdir = "2.5"
+
+arboard = { version = "3.6", default-features = false, features = ["wayland-data-control"] }
+crossterm = "0.29"
+ratatui = "0.30.2"
+ratatui-textarea = "0.9.4"
+clap = { version = "4.6", features = ["derive", "env"] }
+
+sqlx = { version = "0.8.6", default-features = false, features = ["any", "sqlite", "mysql", "runtime-tokio-rustls"] }
+tokio = { version = "1", features = ["rt", "net", "time"] }
+url = "2.5"
+
+libsql = { version = "0.10", default-features = false, features = ["remote", "tls"] }
